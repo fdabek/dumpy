@@ -52,12 +52,22 @@ func walkDirectory(root string) <-chan string {
 	return out
 }
 
-func hashFiles(files <-chan string) {
-	for path := range files {
+type Chunk struct {
+	filename string
+	offset   int64
+	md5sum   string
+}
+
+func hashFiles(files <-chan string) <-chan Chunk {
+	out := make(chan Chunk)
+
+	go func() { for path := range files {
 		f,err := os.Open(path)
 		if err != nil {
 			log.Printf("Couldn't open %s. Skipping it.", path)
 		}
+		var i int64
+		i = 0
 		for {
 			b := make([]byte, 1<<20)
 			n,err := f.Read(b)
@@ -68,11 +78,15 @@ func hashFiles(files <-chan string) {
 				log.Fatal("Non EOF error on ", f.Name())
 			}
 			csum := md5.Sum(b[:n])
-			fmt.Printf("%s: %s\n", f.Name(), hex.EncodeToString(csum[:]))
+			c := Chunk{filename: path, offset: i, md5sum: hex.EncodeToString(csum[:])}
+			out <- c
+			i += int64(n)
 		}
 	}
+		close(out)
+	}()
+	return out
 }
-
 
 
 func main() {
@@ -80,5 +94,7 @@ func main() {
 	flag.Parse()
 
 	files := walkDirectory(*root)
-	hashFiles(files)
+	for c := range hashFiles(files) {
+		fmt.Printf("%s (%d): %s\n", c.filename, c.offset, c.md5sum)
+	}
 }
