@@ -1,12 +1,14 @@
 package main
 
 import "fmt"
+import "encoding/json"
 import "os"
 import "log"
 import "flag"
 import md5 "crypto/md5"
 import hex "encoding/hex"
 import "path"
+import "bufio"
 
 // SRSLY?
 func min(x, y int64) int64 {
@@ -17,10 +19,10 @@ func min(x, y int64) int64 {
 }
 
 type Chunk struct {
-	path     string
-	info     os.FileInfo
-	offset   int64
-	md5sum   string
+	Path     string
+	Info     os.FileInfo
+	Offset   int64
+	Md5sum   string
 	data     []byte
 }
 
@@ -58,7 +60,7 @@ func walkDirectory(root string) <-chan Chunk {
 						o = 0
 						for o < stat.Size() {
 							size := min(1 << 20, stat.Size() - o)
-							c := Chunk{path: full_path, info: stat, offset: o, md5sum: "empty", data: make([]byte, size)}
+							c := Chunk{Path: full_path, Info: stat, Offset: o, Md5sum: "empty", data: make([]byte, size)}
 							out <- c
 							o += (1 << 20)
 						}
@@ -78,19 +80,19 @@ func hashFiles(chunks <-chan Chunk) <-chan Chunk {
 
 	go func() {
 		for c := range chunks {
-			f,err := os.Open(c.path)
+			f,err := os.Open(c.Path)
 			if err != nil {
-				log.Printf("Couldn't open %s. Skipping it.", c.path)
+				log.Printf("Couldn't open %s. Skipping it.", c.Path)
 				continue
 			}
-			n,err := f.ReadAt(c.data, c.offset)
+			n,err := f.ReadAt(c.data, c.Offset)
 			if err != nil {
 				log.Fatal("Non EOF error on ", f.Name())
 			} else if  n != len(c.data) {
-				log.Fatal("Short read: %d v %d (on %s)\n", n, len(c.data), c.path)
+				log.Fatal("Short read: %d v %d (on %s)\n", n, len(c.data), c.Path)
 			}
 			csum := md5.Sum(c.data[:])
-			c.md5sum = hex.EncodeToString(csum[:])
+			c.Md5sum = hex.EncodeToString(csum[:])
 			out <- c
 		}
 		close(out)
@@ -98,12 +100,28 @@ func hashFiles(chunks <-chan Chunk) <-chan Chunk {
 	return out
 }
 
+func writeJSON(chunks <-chan Chunk, filename string) {
+	f,err := os.Create(filename)
+	if err != nil {
+		log.Fatal("Failed to open ", filename);
+	}
+	w := bufio.NewWriter(f)
+	enc := json.NewEncoder(w)
+	for c := range chunks {
+		fmt.Printf("%s (%d): %s\n", c.Path, c.Offset, c.Md5sum)
+		err := enc.Encode(c)
+		if (err != nil) {
+			log.Fatal("Failed to encode")
+		}
+
+	}
+	w.Flush()
+}
+
 func main() {
 	root := flag.String("directory", "", "Directory to scan")
 	flag.Parse()
 
 	chunks := walkDirectory(*root)
-	for c := range hashFiles(chunks) {
-		fmt.Printf("%s (%d): %s\n", c.path, c.offset, c.md5sum)
-	}
+	writeJSON(hashFiles(chunks), "/dev/stdout")
 }
