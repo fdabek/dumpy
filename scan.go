@@ -1,14 +1,14 @@
 package main
 
-import "fmt"
-import "encoding/json"
-import "os"
-import "log"
-import "flag"
+import "bufio"
 import md5 "crypto/md5"
 import hex "encoding/hex"
+import "encoding/json"
+import "flag"
+import "log"
+import "os"
 import "path"
-import "bufio"
+import "time"
 
 // SRSLY?
 func min(x, y int64) int64 {
@@ -20,7 +20,9 @@ func min(x, y int64) int64 {
 
 type Chunk struct {
 	Path     string
-	Info     os.FileInfo
+	FileSize     int64
+	FileModTime  time.Time
+	FilePerm     os.FileMode
 	Offset   int64
 	Md5sum   string
 	data     []byte
@@ -60,7 +62,7 @@ func walkDirectory(root string) <-chan Chunk {
 						o = 0
 						for o < stat.Size() {
 							size := min(1 << 20, stat.Size() - o)
-							c := Chunk{Path: full_path, Info: stat, Offset: o, Md5sum: "empty", data: make([]byte, size)}
+							c := Chunk{Path: full_path, FileSize: stat.Size(), FileModTime: stat.ModTime(), FilePerm: stat.Mode(), Offset: o, Md5sum: "empty", data: make([]byte, size)}
 							out <- c
 							o += (1 << 20)
 						}
@@ -108,7 +110,6 @@ func writeJSON(chunks <-chan Chunk, filename string) {
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	for c := range chunks {
-		fmt.Printf("%s (%d): %s\n", c.Path, c.Offset, c.Md5sum)
 		err := enc.Encode(c)
 		if (err != nil) {
 			log.Fatal("Failed to encode")
