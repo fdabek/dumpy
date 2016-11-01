@@ -1,6 +1,7 @@
 package main
 
 import "bufio"
+import "fmt"
 import md5 "crypto/md5"
 import hex "encoding/hex"
 import "encoding/json"
@@ -8,6 +9,7 @@ import "flag"
 import "log"
 import "os"
 import "path"
+import "sync"
 import "time"
 
 // SRSLY?
@@ -119,10 +121,50 @@ func writeJSON(chunks <-chan Chunk, filename string) {
 	w.Flush()
 }
 
+func uploadChunks(chunks <-chan Chunk, bucket string) {
+	var wg sync.WaitGroup
+	wg.Add(50)
+	for i := 0; i < 50; i++ {
+		go func() {
+			for c := range chunks {
+				CreateChunk(bucket, c.Md5sum, c.data)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+
+func filterChunks(chunks <-chan Chunk, existing map[string]bool) <-chan Chunk {
+	out := make(chan Chunk)
+	go func() {
+		for c := range chunks {
+			if (existing[c.Md5sum] == true) {
+				fmt.Println("Skipping ", c.Md5sum, ". already uploaded") 
+			} else {
+				out <- c
+			}
+		}
+		close(out)
+	}()
+	return out
+}
+
 func main() {
 	root := flag.String("directory", "", "Directory to scan")
+	bucket := flag.String("bucket", "", "Bucket for chunks")
 	flag.Parse()
 
+	initStorageClient()
+
+	existing := make(map[string]bool)
+	for s := range ListBucket(*bucket) {
+		existing[s] = true  // really dumb set
+		fmt.Println(s);
+	}
+
 	chunks := walkDirectory(*root)
-	writeJSON(hashFiles(chunks), "/dev/stdout")
+	filtered := filterChunks(hashFiles(chunks), existing)
+	uploadChunks(filtered, *bucket)
 }
