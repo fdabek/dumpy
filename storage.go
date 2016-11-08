@@ -43,7 +43,7 @@ func CreateChunk(bucket string, path string, data []byte) {
 		fmt.Printf("Object '%s' already exists\n", path)
 		return
 	}
-	if err != storage.ErrObjectNotExist {
+ 	if err != storage.ErrObjectNotExist {
 	   log.Fatal(err)
 	}
 	w := objHandle.NewWriter(ctx)
@@ -65,6 +65,18 @@ func CreateChunk(bucket string, path string, data []byte) {
 	fmt.Printf("Wrote '%s' of size %d\n", path, len(data))
 }
 
+// TODO(fdabek): refactor above to use GetWriter
+func GetWriter(bucket string, path string) *storage.Writer {
+	objHandle := client.Bucket(bucket).Object(path)
+	_, err := objHandle.Attrs(ctx)
+	if err != nil && err != storage.ErrObjectNotExist {
+		log.Fatal("Error opening ", path)
+	}
+	writer := objHandle.NewWriter(ctx)
+	writer.ContentType = "application/json"
+	return writer
+}
+
 func readObject(bucket string, path string) []byte {
 	objHandle := client.Bucket(bucket).Object(path)
 	r, err := objHandle.NewReader(ctx)
@@ -74,6 +86,13 @@ func readObject(bucket string, path string) []byte {
 	err = r.Close()
 	if err != nil { log.Fatal(err) }
 	return data
+}
+
+func GetReader(bucket string, path string) *storage.Reader {
+	objHandle := client.Bucket(bucket).Object(path)
+	r, err := objHandle.NewReader(ctx)
+	if err != nil { log.Fatal(err) }
+	return r
 }
 
 func deleteObject(bucket string, path string) error {
