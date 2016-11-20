@@ -299,6 +299,7 @@ func ProgressBar(total_bytes int64, in <-chan Chunk) <-chan Chunk{
 		for chunk := range in {
 			done_bytes += int64(len(chunk.data))
 			chunk.data = nil
+			out <- chunk
 			fmt.Printf("\r Finished %d of %d", done_bytes, total_bytes)
 		}
 		close(out)
