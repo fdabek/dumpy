@@ -13,6 +13,9 @@ import "time"
 import storage	"cloud.google.com/go/storage"
 import terminal  "golang.org/x/crypto/ssh/terminal"
 import "strings"
+import "os/exec"
+import "strconv"
+import "bytes"
 
 // SRSLY?
 func min(x, y int64) int64 {
@@ -127,7 +130,6 @@ func uploadChunks(chunks <-chan Chunk, bucket string) <-chan Chunk{
 			go func() {
 				for c := range chunks {
 					CreateChunk(bucket, c.Md5sum, c.data)
-					c.data = nil
 					out <- c
 				}
 				wg.Done()
@@ -170,7 +172,6 @@ func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, 
 	go func() {
 		for c := range chunks {
 			if (existing[c.Md5sum] == true) {
-				fmt.Println("Skipping ", c.Md5sum, ". already uploaded") 
 				out_existing <- c
 			} else {
 				out_new <- c
@@ -272,6 +273,39 @@ func VerifyCommand(cmd *Command, args []string) bool {
 	return true
 }
 
+func DiskUsage(dir string) int64 {
+	path, err := exec.LookPath("du")
+	if err != nil {
+		log.Fatal("Install du")
+	}
+	cmd := exec.Command(path, "-sb", dir)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err = cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	s := out.String()
+	parts := strings.Split(s, "\t")
+	ret,_ := strconv.ParseInt(parts[0], 10, 64)
+	return ret
+}
+
+func ProgressBar(total_bytes int64, in <-chan Chunk) <-chan Chunk{
+	out := make(chan Chunk)
+	go func() {
+		var done_bytes int64
+		done_bytes = 0
+		for chunk := range in {
+			done_bytes += int64(len(chunk.data))
+			chunk.data = nil
+			fmt.Printf("\r Finished %d of %d", done_bytes, total_bytes)
+		}
+		close(out)
+	}()
+	return out
+}
+
 func main() {
 	root := flag.String("directory", "", "Directory to scan")
 	bucket := flag.String("bucket", "", "Bucket for chunks")
@@ -282,6 +316,7 @@ func main() {
 	initStorageClient()
 
 	if *mode == "backup" {
+		bytes := DiskUsage(*root)
 		existing := make(map[string]bool)
 		for s := range ListBucket(*bucket) {
 			existing[s] = true  // really dumb set
@@ -299,7 +334,7 @@ func main() {
 		metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
 		fmt.Println("Writing metadata to ", metadata_filename)
 		w := GetWriter(*bucket, metadata_filename, "application/json")
-		writeJSON(j, w)
+		writeJSON(ProgressBar(bytes, j), w)
 	} else if (*mode == "restore") {
 //		restore(*bucket, *restore_json)
 	} else if (*mode == "interactive") {
