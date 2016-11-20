@@ -48,11 +48,6 @@ func CreateChunk(bucket string, path string, data []byte) {
 	}
 	w := objHandle.NewWriter(ctx)
 	w.ContentType = "application/octet-stream"
-	// optional: set custom metadata
-//	if w.Metadata == nil{
-//		w.Metadata = make(map[string]string)
-//	}
-//	w.Metadata["Filename"] = filename
 
 	_, err = w.Write(data)
 	if err != nil {
@@ -66,14 +61,14 @@ func CreateChunk(bucket string, path string, data []byte) {
 }
 
 // TODO(fdabek): refactor above to use GetWriter
-func GetWriter(bucket string, path string) *storage.Writer {
+func GetWriter(bucket string, path string, content_type string) *storage.Writer {
 	objHandle := client.Bucket(bucket).Object(path)
 	_, err := objHandle.Attrs(ctx)
 	if err != nil && err != storage.ErrObjectNotExist {
 		log.Fatal("Error opening ", path)
 	}
 	writer := objHandle.NewWriter(ctx)
-	writer.ContentType = "application/json"
+	writer.ContentType = content_type
 	return writer
 }
 
@@ -105,6 +100,26 @@ func ListBucket(bucket string) <-chan string {
 
 	go func() {
 		objects := client.Bucket(bucket).Objects(ctx, nil)
+		for {
+			attr, err := objects.Next()
+			if err != nil {
+				break
+			}
+			out <- attr.Name
+		}
+		close(out)
+	}()	
+	return out
+}
+
+func ListMetadata(bucket string) <-chan string {
+	out := make(chan string)
+
+	go func() {
+		q := new(storage.Query)
+		q.Prefix = "/metadata"
+
+		objects := client.Bucket(bucket).Objects(ctx, q)
 		for {
 			attr, err := objects.Next()
 			if err != nil {

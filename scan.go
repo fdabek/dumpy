@@ -11,6 +11,8 @@ import "path"
 import "sync"
 import "time"
 import storage	"cloud.google.com/go/storage"
+import terminal  "golang.org/x/crypto/ssh/terminal"
+import "strings"
 
 // SRSLY?
 func min(x, y int64) int64 {
@@ -107,7 +109,6 @@ func hashFiles(chunks <-chan Chunk) <-chan Chunk {
 func writeJSON(chunks <-chan Chunk, writer *storage.Writer) {
 	enc := json.NewEncoder(writer)
 	for c := range chunks {
-		fmt.Println(c.Path)
 		err := enc.Encode(c)
 		if (err != nil) {
 			log.Fatal("Failed to encode")
@@ -181,7 +182,28 @@ func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, 
 	return out_new, out_existing
 }
 
-func restore(bucket string, metadata string) {
+func Restore(bucket string, chunks []Chunk) {
+	// TODO: verify all chunks are present
+	for _,c := range chunks {
+		// add in the data
+		c.data = readObject(bucket, c.Md5sum)
+		c.Path = c.Path[1:]
+		err := os.MkdirAll(path.Dir(c.Path), 0777)
+		if err != nil {
+			log.Fatal(err)
+		}
+		f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, c.FilePerm)
+		if err != nil {
+			log.Fatal("Error opening: ", err)
+		}
+		n, err := f.WriteAt(c.data, c.Offset)
+		if err != nil || n != len(c.data) {
+			log.Fatal("error writing to ", c.Path, " ", err)
+		}
+	}
+}
+
+func RestoreAll(bucket string, metadata string) {
 	chunks := make(chan Chunk)
 	var wg sync.WaitGroup
 
@@ -219,7 +241,6 @@ func restore(bucket string, metadata string) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(c.Path, " ")
 
 		// make relative
 		c.Path = c.Path[1:]
@@ -230,11 +251,32 @@ func restore(bucket string, metadata string) {
 	wg.Wait()
 }
 
+type FsState struct {
+	pwd *FsEntry
+	term *terminal.Terminal
+}
+
+type Command struct {
+	name string
+	min_args int
+	max_args int
+	usage string
+	cmd func(pwd *FsState, args []string)
+}
+
+func VerifyCommand(cmd *Command, args []string) bool {
+	num_args := len(args) - 1;  // -1 for command name in args[0]
+	if num_args > cmd.max_args || num_args < cmd.min_args {
+		return false
+	}
+	return true
+}
+
 func main() {
 	root := flag.String("directory", "", "Directory to scan")
 	bucket := flag.String("bucket", "", "Bucket for chunks")
 	mode := flag.String("mode", "", "backup|restore")
-	metadata := flag.String("metadata", "", "metadta file name. Maybe the date?")
+
 	flag.Parse()
 
 	initStorageClient()
@@ -243,18 +285,99 @@ func main() {
 		existing := make(map[string]bool)
 		for s := range ListBucket(*bucket) {
 			existing[s] = true  // really dumb set
-			fmt.Println(s);
 		}
 
 		chunks := walkDirectory(*root)  // get all chunks in source file system
 		n, e := filterChunks(hashFiles(chunks), existing)  // hash them to find new and existing ones
 		u := uploadChunks(n, *bucket) // upload the new ones, spit out chunks after uploaded
 		j := mergeTwo(e, u)  // write everything to the JSON file (if a chunk gets here it's in GCS)
-		w := GetWriter(*bucket, *metadata)
+
+		// generate a name for the backup: metadata/hostname/YY/MM/DD/HH/MM
+		t := time.Now()
+		host,_ := os.Hostname();
+		prefix := t.Format("06/01/02/03/04")
+		metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
+		fmt.Println("Writing metadata to ", metadata_filename)
+		w := GetWriter(*bucket, metadata_filename, "application/json")
 		writeJSON(j, w)
 	} else if (*mode == "restore") {
-		restore(*bucket, *metadata)
-	} else {
-		log.Fatal("Unkown mode: ", *mode)
+//		restore(*bucket, *restore_json)
+	} else if (*mode == "interactive") {
+		// Set up the terminal
+		if !terminal.IsTerminal(0) {
+			log.Fatal("stdin not a terminal")
+		}
+		oldState, err := terminal.MakeRaw(0)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer terminal.Restore(0, oldState)
+		n := terminal.NewTerminal(os.Stdin, ">")
+
+		// Insert the metadata directories:
+		root := MakeDirEntry("", nil)
+		for s := range ListMetadata(*bucket) {
+			d := InsertPath(strings.TrimSuffix(strings.TrimPrefix(s, "/metadata"), "backup.json"), root)
+			d.lazy_file_maker = func() { InsertFromJSON(d, "dumpy", s) }
+		}
+
+		var fs_state *FsState
+		fs_state = &FsState{root, n}
+
+		// Set up commands:
+		cmds := make(map[string]Command)
+		cmds["ls"] = Command{"ls", 0, 0, "ls ; List current directory", func(state *FsState, args []string) {
+			c := ListDir(state.pwd)
+			for f := range c {
+				n.Write([]byte(FormatFilename(f) + "\r\n"))
+			}
+		}}
+		cmds["cd"] = Command{"cd", 1, 1, "cd dir ; Change directory", func(state *FsState, args []string) {
+			new := ChangeDir(state.pwd, args[1])
+			if new == nil {
+				n.Write([]byte("Error changing to" + args[1] + "\r\n"))
+			} else {
+				state.pwd = new
+			}
+		}}
+		cmds["restore"] = Command{"restore", 1, 1, "restore target ; Restore a file or directory", func(state *FsState, args []string) {
+			f := GetFSEntry(state.pwd, args[1])
+			if f == nil {
+				state.term.Write([]byte("Failed to open " + args[1] + "\r\n"))
+				return
+			}
+			if f.file {
+				Restore(*bucket, f.chunks)
+			} else {
+				restore_func := func(f *FsEntry, path []*FsEntry) {
+					if f.file {
+						state.term.Write([]byte("Restoring: " + f.name + "..."))
+						Restore(*bucket, f.chunks)
+						state.term.Write([]byte("done.\r\n"));
+					}
+				}
+				Walk(state.pwd, 1023, restore_func)
+			}
+		}}
+
+		// Wait for commands:
+		for {
+			line,_ := n.ReadLine()
+			if line == "exit" {
+				break
+			}
+			parts := strings.Split(line, " ")
+
+			cmd,ok := cmds[parts[0]]
+			if !ok {
+				fs_state.term.Write([]byte("Unknown command " + parts[0] + "\r\n"))
+			} else {
+				if VerifyCommand(&cmd, parts) {
+					cmd.cmd(fs_state, parts)
+				} else {
+					fs_state.term.Write([]byte(cmd.usage + "\r\n"))
+				}
+			}
+		}
 	}
 }
