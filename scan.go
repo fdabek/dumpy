@@ -349,6 +349,13 @@ func main() {
 		}
 		defer terminal.Restore(0, oldState)
 		n := terminal.NewTerminal(os.Stdin, ">")
+		n.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
+			if key == 3 {
+				terminal.Restore(0, oldState)
+				os.Exit(1)
+			}
+			return "", 0, false
+		}
 
 		// Insert the metadata directories:
 		root := MakeDirEntry("", nil)
@@ -409,7 +416,9 @@ func main() {
 				fs_state.term.Write([]byte("Unknown command " + parts[0] + "\r\n"))
 			} else {
 				if VerifyCommand(&cmd, parts) {
+					terminal.Restore(0, oldState)
 					cmd.cmd(fs_state, parts)
+					terminal.MakeRaw(0);
 				} else {
 					fs_state.term.Write([]byte(cmd.usage + "\r\n"))
 				}
