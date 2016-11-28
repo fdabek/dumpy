@@ -201,6 +201,11 @@ func Restore(bucket string, chunks []Chunk) {
 		if err != nil || n != len(c.data) {
 			log.Fatal("error writing to ", c.Path, " ", err)
 		}
+		err = os.Chtimes(c.Path, c.FileModTime, c.FileModTime)
+		if err != nil {
+			log.Fatal("Error changing access times: ", err)
+		}
+		f.Close()
 	}
 }
 
@@ -331,7 +336,7 @@ func main() {
 		// generate a name for the backup: metadata/hostname/YY/MM/DD/HH/MM
 		t := time.Now()
 		host,_ := os.Hostname();
-		prefix := t.Format("06/01/02/03/04")
+		prefix := t.Format("2006-01-02@03:04")
 		metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
 		fmt.Println("Writing metadata to ", metadata_filename)
 		w := GetWriter(*bucket, metadata_filename, "application/json")
@@ -349,13 +354,6 @@ func main() {
 		}
 		defer terminal.Restore(0, oldState)
 		n := terminal.NewTerminal(os.Stdin, ">")
-		n.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
-			if key == 3 {
-				terminal.Restore(0, oldState)
-				os.Exit(1)
-			}
-			return "", 0, false
-		}
 
 		// Insert the metadata directories:
 		root := MakeDirEntry("", nil)
@@ -366,6 +364,35 @@ func main() {
 
 		var fs_state *FsState
 		fs_state = &FsState{root, n}
+
+		n.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
+			if key == 3 {
+				terminal.Restore(0, oldState)
+				os.Exit(1)
+			}
+
+			// autocomplete for 'cd' on TAB
+			if key == 9 {
+				parts := strings.Split(line, " ")
+				if (parts[0] == "cd") && len(parts) == 2 {
+					c := ListDir(fs_state.pwd)
+					matches := []string{}
+					for f := range c {
+						if strings.HasPrefix(f.name, parts[1]) {
+							matches = append(matches, f.name)
+						}
+					}
+
+					if len(matches) == 1 {
+						outstring := "cd " + matches[0]
+						return outstring, len(outstring), true
+					}
+					// TODO(fdabek): do something with more than one match, like print
+					// them without advancing the cursor.
+				}
+			}
+			return "", 0, false
+		}
 
 		// Set up commands:
 		cmds := make(map[string]Command)
