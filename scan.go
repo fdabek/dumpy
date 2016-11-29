@@ -312,6 +312,35 @@ func ProgressBar(total_bytes int64, in <-chan Chunk) <-chan Chunk{
 	return out
 }
 
+func LongestPrefixString(s []string) string {
+	p := 0
+	prefix := ""
+	still_looking := true
+
+	if len(s) == 0 {
+		return ""
+	}
+
+	for still_looking {
+		if len(s[0]) <= p {
+			still_looking = false
+			break
+		}
+		cand := s[0][p]
+		for i := 1; i < len(s); i++ {
+			if len(s[i]) <= p || s[i][p] != cand {
+				still_looking = false
+				break;
+			}
+		}
+		if still_looking {
+			prefix = prefix + string(cand)
+			p++
+		}
+	}
+	return prefix
+}
+
 func main() {
 	root := flag.String("directory", "", "Directory to scan")
 	bucket := flag.String("bucket", "", "Bucket for chunks")
@@ -353,7 +382,7 @@ func main() {
 			log.Fatal(err)
 		}
 		defer terminal.Restore(0, oldState)
-		n := terminal.NewTerminal(os.Stdin, ">")
+		n := terminal.NewTerminal(os.Stdin, "> ")
 
 		// Insert the metadata directories:
 		root := MakeDirEntry("", nil)
@@ -386,9 +415,15 @@ func main() {
 					if len(matches) == 1 {
 						outstring := "cd " + matches[0]
 						return outstring, len(outstring), true
+					} else {
+						stripped := []string{}
+						for _,s := range matches {
+							stripped = append(stripped, strings.TrimPrefix(s, parts[1]))
+						}
+						prefix := LongestPrefixString(stripped)
+						outstring := "cd " + parts[1] + prefix
+						return outstring, len(outstring), true
 					}
-					// TODO(fdabek): do something with more than one match, like print
-					// them without advancing the cursor.
 				}
 			}
 			return "", 0, false
