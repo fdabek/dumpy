@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 
@@ -40,7 +39,6 @@ func CreateChunk(bucket string, path string, data []byte) {
 	objHandle := client.Bucket(bucket).Object(path)
 	_, err := objHandle.Attrs(ctx)
 	if err == nil {
-		fmt.Printf("Object '%s' already exists\n", path)
 		return
 	}
  	if err != storage.ErrObjectNotExist {
@@ -57,7 +55,6 @@ func CreateChunk(bucket string, path string, data []byte) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Wrote '%s' of size %d\n", path, len(data))
 }
 
 // TODO(fdabek): refactor above to use GetWriter

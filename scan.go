@@ -32,7 +32,9 @@ type Chunk struct {
 	FilePerm     os.FileMode
 	Offset   int64
 	Md5sum   string
+	// only one of the below should be set:
 	data     []byte
+	LinkTarget string
 }
 
 func walkDirectory(root string) <-chan Chunk {
@@ -89,19 +91,29 @@ func hashFiles(chunks <-chan Chunk) <-chan Chunk {
 
 	go func() {
 		for c := range chunks {
-			f,err := os.Open(c.Path)
-			if err != nil {
-				log.Printf("Couldn't open %s. Skipping it.", c.Path)
-				continue
+			if (c.FilePerm & os.ModeSymlink) != 0 {
+				target,err := os.Readlink(c.Path)
+				if err != nil {
+					log.Fatal("Failed to read link: ", c.Path)
+				}
+				csum := md5.Sum([]byte(c.Path))
+				c.Md5sum = hex.EncodeToString(csum[:])
+				c.LinkTarget = target
+			} else {
+				f,err := os.Open(c.Path)
+				if err != nil {
+					log.Printf("Couldn't open %s. Skipping it.", c.Path)
+					continue
+				}
+				n,err := f.ReadAt(c.data, c.Offset)
+				if err != nil {
+					log.Fatal("Non EOF error on ", f.Name())
+				} else if  n != len(c.data) {
+					log.Fatal("Short read: %d v %d (on %s)\n", n, len(c.data), c.Path)
+				}
+				csum := md5.Sum(c.data[:])
+				c.Md5sum = hex.EncodeToString(csum[:])
 			}
-			n,err := f.ReadAt(c.data, c.Offset)
-			if err != nil {
-				log.Fatal("Non EOF error on ", f.Name())
-			} else if  n != len(c.data) {
-				log.Fatal("Short read: %d v %d (on %s)\n", n, len(c.data), c.Path)
-			}
-			csum := md5.Sum(c.data[:])
-			c.Md5sum = hex.EncodeToString(csum[:])
 			out <- c
 		}
 		close(out)
@@ -183,16 +195,19 @@ func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, 
 	return out_new, out_existing
 }
 
-func Restore(bucket string, chunks []Chunk) {
-	// TODO: verify all chunks are present
-	for _,c := range chunks {
-		// add in the data
-		c.data = readObject(bucket, c.Md5sum)
-		c.Path = c.Path[1:]
-		err := os.MkdirAll(path.Dir(c.Path), 0777)
+func RestoreOneChunk(bucket string, c Chunk) {
+	c.data = readObject(bucket, c.Md5sum)
+	c.Path = c.Path[1:]
+	err := os.MkdirAll(path.Dir(c.Path), 0777)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if (c.LinkTarget != "") {
+		err := os.Symlink(c.LinkTarget, c.Path)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Error symlinking: ", c.Path, " --> ", c.LinkTarget)
 		}
+	} else {
 		f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, c.FilePerm)
 		if err != nil {
 			log.Fatal("Error opening: ", err)
@@ -209,6 +224,13 @@ func Restore(bucket string, chunks []Chunk) {
 	}
 }
 
+func Restore(bucket string, chunks []Chunk) {
+	// TODO: verify all chunks are present
+	for _,c := range chunks {
+		RestoreOneChunk(bucket, c)
+	}
+}
+
 func RestoreAll(bucket string, metadata string) {
 	chunks := make(chan Chunk)
 	var wg sync.WaitGroup
@@ -217,22 +239,7 @@ func RestoreAll(bucket string, metadata string) {
 	for i := 0; i < 50; i++ {
 		go func() {
 			for c := range chunks {
-				// add in the data
-				c.data = readObject(bucket, c.Md5sum)
-
-				err := os.MkdirAll(path.Dir(c.Path), 0777)
-				if err != nil {
-					log.Fatal(err)
-				}
-				f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, c.FilePerm)
-				if err != nil {
-					log.Fatal("Error opening: ", err)
-				}
-				n, err := f.WriteAt(c.data, c.Offset)
-				if err != nil || n != len(c.data) {
-					log.Fatal("error writing to ", c.Path, " ", err)
-				}
-				f.Close()
+				RestoreOneChunk(bucket, c)
 			}
 			wg.Done()
 			
@@ -305,7 +312,7 @@ func ProgressBar(total_bytes int64, in <-chan Chunk) <-chan Chunk{
 			done_bytes += int64(len(chunk.data))
 			chunk.data = nil
 			out <- chunk
-			fmt.Printf("\r Finished %d of %d", done_bytes, total_bytes)
+			fmt.Printf("\r Finished %d of %d bytes (%f)", done_bytes, total_bytes, 100.0 * float64(done_bytes) / float64(total_bytes))
 		}
 		close(out)
 	}()
@@ -367,7 +374,6 @@ func main() {
 		host,_ := os.Hostname();
 		prefix := t.Format("2006-01-02@03:04")
 		metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
-		fmt.Println("Writing metadata to ", metadata_filename)
 		w := GetWriter(*bucket, metadata_filename, "application/json")
 		writeJSON(ProgressBar(bytes, j), w)
 	} else if (*mode == "restore") {
