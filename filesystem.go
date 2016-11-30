@@ -2,6 +2,7 @@ package main
 
 import "encoding/json"
 import "log"
+import "sort"
 import "strings"
 
 type FsEntry struct  {
@@ -115,15 +116,20 @@ func walkHelper(dir *FsEntry, depth int, callback func(*FsEntry, []*FsEntry), pa
 	}
 }
 
-func ListDir(dir* FsEntry) <-chan *FsEntry {
-	ret := make(chan *FsEntry)
+// Nice, compact functor syntax you got there, Rob...
+type ByFilename []*FsEntry
+
+func (a ByFilename) Len() int           { return len(a) }
+func (a ByFilename) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByFilename) Less(i, j int) bool { return a[i].name < a[j].name }
+
+func ListDir(dir* FsEntry) []*FsEntry {
+	ret := make([]*FsEntry, 0)
 	cb := func(dir* FsEntry, parents []*FsEntry) {
-		ret <- dir
+		ret = append(ret, dir)
 	}
-	go func() {
-		Walk(dir, 1, cb)
-		close(ret)
-	}()
+	Walk(dir, 1, cb)
+	sort.Sort(ByFilename(ret))
 	return ret
 }
 

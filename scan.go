@@ -391,6 +391,8 @@ func main() {
 			d.lazy_file_maker = func() { InsertFromJSON(d, "dumpy", s) }
 		}
 
+		// setup shared state. Apparently Go captures everything in lambdas so we can get at this
+		// from the autocomplete callback.
 		var fs_state *FsState
 		fs_state = &FsState{root, n}
 
@@ -406,7 +408,7 @@ func main() {
 				if (parts[0] == "cd") && len(parts) == 2 {
 					c := ListDir(fs_state.pwd)
 					matches := []string{}
-					for f := range c {
+					for _,f := range c {
 						if strings.HasPrefix(f.name, parts[1]) {
 							matches = append(matches, f.name)
 						}
@@ -433,8 +435,18 @@ func main() {
 		cmds := make(map[string]Command)
 		cmds["ls"] = Command{"ls", 0, 0, "ls ; List current directory", func(state *FsState, args []string) {
 			c := ListDir(state.pwd)
-			for f := range c {
-				n.Write([]byte(FormatFilename(f) + "\r\n"))
+			line := ""
+			for _,f := range c {
+				fname := FormatFilename(f)
+				if (len(line) + len(fname) + 1) >= 80 {
+					strings.TrimRight(line, " ")
+					n.Write([]byte(line + "\r\n"))
+					line = ""
+				}
+				line = line + fname + " ";
+			}
+			if len(line) > 0 {
+				n.Write([]byte(line + "\r\n"))
 			}
 		}}
 		cmds["cd"] = Command{"cd", 1, 1, "cd dir ; Change directory", func(state *FsState, args []string) {
