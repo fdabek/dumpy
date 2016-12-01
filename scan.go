@@ -209,7 +209,7 @@ func RestoreOneChunk(bucket string, c Chunk) {
 			log.Fatal("Error symlinking: ", c.Path, " --> ", c.LinkTarget)
 		}
 	} else {
-		f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, c.FilePerm)
+		f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, 0777)  // we'll fix up the perms later.
 		if err != nil {
 			log.Fatal("Error opening: ", err)
 		}
@@ -217,11 +217,19 @@ func RestoreOneChunk(bucket string, c Chunk) {
 		if err != nil || n != len(c.data) {
 			log.Fatal("error writing to ", c.Path, " ", err)
 		}
-		err = os.Chtimes(c.Path, c.FileModTime, c.FileModTime)
-		if err != nil {
-			log.Fatal("Error changing access times: ", err)
-		}
 		f.Close()
+	}
+}
+
+func FixPermAndTimes(c Chunk) {
+	c.Path = c.Path[1:]
+	err := os.Chmod(c.Path, c.FilePerm)
+	if err != nil {
+		log.Fatal("Error chmod'ing: ", err)
+	}
+	err = os.Chtimes(c.Path, c.FileModTime, c.FileModTime)
+	if err != nil {
+		log.Fatal("Error changing access times: ", err)
 	}
 }
 
@@ -229,6 +237,14 @@ func Restore(bucket string, chunks []Chunk) {
 	// TODO: verify all chunks are present
 	for _,c := range chunks {
 		RestoreOneChunk(bucket, c)
+	}
+
+	// Fix permissions _after_ writing everything out
+	// in case any files lack write permission (this causes
+	// multi-chunk files to error when we try to write the
+	// second chunk)
+	for _,c := range chunks {
+		FixPermAndTimes(c)
 	}
 }
 
