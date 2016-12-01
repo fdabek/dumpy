@@ -524,7 +524,7 @@ func main() {
 					
 				}()
 			}
-
+			
 			if f.file {
 				c <- f;
 			} else {
@@ -535,6 +535,8 @@ func main() {
 				}
 				Walk(state.pwd, 1023, restore_func)
 			}
+			close(c)
+			wg.Wait()
 		}}
 
 		// Wait for commands:
