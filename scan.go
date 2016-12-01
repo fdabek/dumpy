@@ -196,33 +196,21 @@ func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, 
 	return out_new, out_existing
 }
 
-func RestoreOneChunk(bucket string, c Chunk) {
-	c.data = readObject(bucket, c.Md5sum)
-	c.Path = c.Path[1:]
-	err := os.MkdirAll(path.Dir(c.Path), 0777)
-	if err != nil {
-		log.Fatal(err)
-	}
+func RestoreOneChunk(f *os.File, c Chunk) {
 	if (c.LinkTarget != "") {
 		err := os.Symlink(c.LinkTarget, c.Path)
 		if err != nil {
 			log.Fatal("Error symlinking: ", c.Path, " --> ", c.LinkTarget)
 		}
 	} else {
-		f, err := os.OpenFile(c.Path, os.O_RDWR | os.O_CREATE, 0777)  // we'll fix up the perms later.
-		if err != nil {
-			log.Fatal("Error opening: ", err)
-		}
 		n, err := f.WriteAt(c.data, c.Offset)
 		if err != nil || n != len(c.data) {
 			log.Fatal("error writing to ", c.Path, " ", err)
 		}
-		f.Close()
 	}
 }
 
 func FixPermAndTimes(c Chunk) {
-	c.Path = c.Path[1:]
 	err := os.Chmod(c.Path, c.FilePerm)
 	if err != nil {
 		log.Fatal("Error chmod'ing: ", err)
@@ -233,10 +221,44 @@ func FixPermAndTimes(c Chunk) {
 	}
 }
 
-func Restore(bucket string, chunks []Chunk) {
-	// TODO: verify all chunks are present
+func RestoreFile(bucket string, chunks []Chunk) {
+	p := chunks[0].Path
+	size := chunks[0].FileSize;
+
+	// Verify chunks and fill:
+	m := make(map[int64]bool)
+	var bytes int64
+	bytes = 0
+	for i,c := range chunks {
+		if c.Path != p {
+			log.Fatal("Chunk from file ", c.Path, " while restoring ", p)
+		}
+		if (c.FileSize != size) {
+			log.Fatal("Mismatched sizes: ", c.FileSize, " vs ", size)
+		}
+		if m[c.Offset] {
+			log.Fatal("Duplicate offset ", c.Offset)
+		}
+		m[c.Offset] = true
+
+		chunks[i].data = readObject(bucket, c.Md5sum)
+		bytes += int64(len(chunks[i].data))
+	}
+	if (bytes != size) {
+		log.Fatal("Missing chunks: ", bytes, " vs ", size)
+	}
+
+	// make relative. TODO(fdabek): choose restore dir?
+	p = p[1:]
+	err := os.MkdirAll(path.Dir(p), 0777)
+	f, err := os.OpenFile(p, os.O_RDWR | os.O_CREATE | os.O_EXCL, 0777)  // we'll fix up the perms later.
+
+	if err != nil {
+		log.Fatal("Error opening: ", err)
+	}
+
 	for _,c := range chunks {
-		RestoreOneChunk(bucket, c)
+		RestoreOneChunk(f, c)
 	}
 
 	// Fix permissions _after_ writing everything out
@@ -256,7 +278,8 @@ func RestoreAll(bucket string, metadata string) {
 	for i := 0; i < 50; i++ {
 		go func() {
 			for c := range chunks {
-				RestoreOneChunk(bucket, c)
+				// TODO(fdabek): group by files and call RestoreFile?
+				log.Fatal("Not implemented", c.Path)
 			}
 			wg.Done()
 			
@@ -487,12 +510,12 @@ func main() {
 				return
 			}
 			if f.file {
-				Restore(*bucket, f.chunks)
+				RestoreFile(*bucket, f.chunks)
 			} else {
 				restore_func := func(f *FsEntry, path []*FsEntry) {
 					if f.file {
 						state.term.Write([]byte("Restoring: " + f.name + "..."))
-						Restore(*bucket, f.chunks)
+						RestoreFile(*bucket, f.chunks)
 						state.term.Write([]byte("done.\r\n"));
 					}
 				}
