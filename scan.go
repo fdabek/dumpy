@@ -210,12 +210,12 @@ func RestoreOneChunk(f *os.File, c Chunk) {
 	}
 }
 
-func FixPermAndTimes(c Chunk) {
-	err := os.Chmod(c.Path, c.FilePerm)
+func FixPermAndTimes(path string, c Chunk) {
+	err := os.Chmod(path, c.FilePerm)
 	if err != nil {
 		log.Fatal("Error chmod'ing: ", err)
 	}
-	err = os.Chtimes(c.Path, c.FileModTime, c.FileModTime)
+	err = os.Chtimes(path, c.FileModTime, c.FileModTime)
 	if err != nil {
 		log.Fatal("Error changing access times: ", err)
 	}
@@ -265,9 +265,7 @@ func RestoreFile(bucket string, chunks []Chunk) {
 	// in case any files lack write permission (this causes
 	// multi-chunk files to error when we try to write the
 	// second chunk)
-	for _,c := range chunks {
-		FixPermAndTimes(c)
-	}
+	FixPermAndTimes(p, chunks[0])
 }
 
 func RestoreAll(bucket string, metadata string) {
@@ -433,8 +431,10 @@ func main() {
 		// Insert the metadata directories:
 		root := MakeDirEntry("", nil)
 		for s := range ListMetadata(*bucket) {
-			d := InsertPath(strings.TrimSuffix(strings.TrimPrefix(s, "/metadata"), "backup.json"), root)
-			d.lazy_file_maker = func() { InsertFromJSON(d, "dumpy", s) }
+			md_path := strings.TrimSuffix(strings.TrimPrefix(s, "/metadata"), "backup.json")
+			dumb := s
+			d := InsertPath(md_path, root)
+			d.lazy_file_maker = func() { InsertFromJSON(d, "dumpy", dumb) }
 		}
 
 		// setup shared state. Apparently Go captures everything in lambdas so we can get at this
@@ -509,14 +509,28 @@ func main() {
 				state.term.Write([]byte("Failed to open " + args[1] + "\r\n"))
 				return
 			}
+
+			c := make(chan *FsEntry)
+
+			var wg sync.WaitGroup
+			wg.Add(50)
+			for i := 0; i < 50; i++ {
+				go func() {
+					for f := range c {
+						state.term.Write([]byte("Restoring: " + f.name + "...\r\n"))
+						RestoreFile(*bucket, f.chunks)
+					}
+					wg.Done()
+					
+				}()
+			}
+
 			if f.file {
-				RestoreFile(*bucket, f.chunks)
+				c <- f;
 			} else {
 				restore_func := func(f *FsEntry, path []*FsEntry) {
 					if f.file {
-						state.term.Write([]byte("Restoring: " + f.name + "..."))
-						RestoreFile(*bucket, f.chunks)
-						state.term.Write([]byte("done.\r\n"));
+						c <- f
 					}
 				}
 				Walk(state.pwd, 1023, restore_func)
