@@ -16,6 +16,7 @@ import "strings"
 import "os/exec"
 import "strconv"
 import "bytes"
+import "github.com/dustin/go-humanize"
 
 // SRSLY?
 func min(x, y int64) int64 {
@@ -285,7 +286,7 @@ func VerifyCommand(cmd *Command, args []string) bool {
 	return true
 }
 
-func DiskUsage(dir string) int64 {
+func DiskUsage(dir string) uint64 {
 	path, err := exec.LookPath("du")
 	if err != nil {
 		log.Fatal("Install du")
@@ -300,19 +301,19 @@ func DiskUsage(dir string) int64 {
 	s := out.String()
 	parts := strings.Split(s, "\t")
 	ret,_ := strconv.ParseInt(parts[0], 10, 64)
-	return ret
+	return uint64(ret)
 }
 
-func ProgressBar(total_bytes int64, in <-chan Chunk) <-chan Chunk{
+func ProgressBar(total_bytes uint64, in <-chan Chunk) <-chan Chunk{
 	out := make(chan Chunk)
 	go func() {
-		var done_bytes int64
+		var done_bytes uint64
 		done_bytes = 0
 		for chunk := range in {
-			done_bytes += int64(len(chunk.data))
+			done_bytes += uint64(len(chunk.data))
 			chunk.data = nil
 			out <- chunk
-			fmt.Printf("\r Finished %d of %d bytes (%f)", done_bytes, total_bytes, 100.0 * float64(done_bytes) / float64(total_bytes))
+			fmt.Printf("\r Finished %s of %s (%0.2f%%)", humanize.Bytes(done_bytes), humanize.Bytes(total_bytes), 100.0 * float64(done_bytes) / float64(total_bytes))
 		}
 		close(out)
 	}()
