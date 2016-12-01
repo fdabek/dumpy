@@ -448,10 +448,10 @@ func main() {
 				os.Exit(1)
 			}
 
-			// autocomplete for 'cd' on TAB
+			// autocomplete for 'cd' and 'restore' on TAB
 			if key == 9 {
 				parts := strings.Split(line, " ")
-				if (parts[0] == "cd") && len(parts) == 2 {
+				if (parts[0] == "cd" || parts[0] == "restore") && len(parts) == 2 {
 					c := ListDir(fs_state.pwd)
 					matches := []string{}
 					for _,f := range c {
@@ -461,7 +461,7 @@ func main() {
 					}
 
 					if len(matches) == 1 {
-						outstring := "cd " + matches[0]
+						outstring := parts[0] + " " + matches[0]
 						return outstring, len(outstring), true
 					} else {
 						stripped := []string{}
@@ -469,7 +469,7 @@ func main() {
 							stripped = append(stripped, strings.TrimPrefix(s, parts[1]))
 						}
 						prefix := LongestPrefixString(stripped)
-						outstring := "cd " + parts[1] + prefix
+						outstring := parts[0] + " " + parts[1] + prefix
 						return outstring, len(outstring), true
 					}
 				}
