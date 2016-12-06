@@ -15,6 +15,7 @@ import terminal  "golang.org/x/crypto/ssh/terminal"
 import "strings"
 import "os/exec"
 import "strconv"
+import "syscall"
 import "bytes"
 import "github.com/dustin/go-humanize"
 
@@ -33,6 +34,8 @@ type Chunk struct {
 	FilePerm     os.FileMode
 	Offset   int64
 	Md5sum   string
+	Uid    uint32
+        Gid    uint32
 	// only one of the below should be set:
 	data     []byte
 	LinkTarget string
@@ -72,7 +75,10 @@ func walkDirectory(root string) <-chan Chunk {
 						o = 0
 						for o < stat.Size() {
 							size := min(1 << 20, stat.Size() - o)
-							c := Chunk{Path: full_path, FileSize: stat.Size(), FileModTime: stat.ModTime(), FilePerm: stat.Mode(), Offset: o, Md5sum: "empty", data: make([]byte, size)}
+							// Get UID/GID
+							uid := stat.Sys().(*syscall.Stat_t).Uid
+							gid := stat.Sys().(*syscall.Stat_t).Gid
+							c := Chunk{Path: full_path, FileSize: stat.Size(), FileModTime: stat.ModTime(), FilePerm: stat.Mode(), Offset: o, Md5sum: "empty", data: make([]byte, size), Uid: uid, Gid: gid}
 							out <- c
 							o += (1 << 20)
 						}
@@ -197,16 +203,9 @@ func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, 
 }
 
 func RestoreOneChunk(f *os.File, c Chunk) {
-	if (c.LinkTarget != "") {
-		err := os.Symlink(c.LinkTarget, c.Path)
-		if err != nil {
-			log.Fatal("Error symlinking: ", c.Path, " --> ", c.LinkTarget)
-		}
-	} else {
-		n, err := f.WriteAt(c.data, c.Offset)
-		if err != nil || n != len(c.data) {
-			log.Fatal("error writing to ", c.Path, " ", err)
-		}
+	n, err := f.WriteAt(c.data, c.Offset)
+	if err != nil || n != len(c.data) {
+		log.Fatal("error writing to ", f.Name(), " ", err)
 	}
 }
 
@@ -214,6 +213,10 @@ func FixPermAndTimes(path string, c Chunk) {
 	err := os.Chmod(path, c.FilePerm)
 	if err != nil {
 		log.Fatal("Error chmod'ing: ", err)
+	}
+	err = os.Chown(path, (int)(c.Uid), (int)(c.Gid))
+	if (err != nil) {
+		log.Fatal("Error changing owner to ", c.Uid, " ", c.Gid, ": ", err)
 	}
 	err = os.Chtimes(path, c.FileModTime, c.FileModTime)
 	if err != nil {
@@ -251,21 +254,32 @@ func RestoreFile(bucket string, chunks []Chunk) {
 	// make relative. TODO(fdabek): choose restore dir?
 	p = p[1:]
 	err := os.MkdirAll(path.Dir(p), 0777)
-	f, err := os.OpenFile(p, os.O_RDWR | os.O_CREATE | os.O_EXCL, 0777)  // we'll fix up the perms later.
-
 	if err != nil {
-		log.Fatal("Error opening: ", err)
+		log.Fatal("Can't create dir ", path.Dir(p), ": ", err)
 	}
 
-	for _,c := range chunks {
-		RestoreOneChunk(f, c)
-	}
+	if chunks[0].LinkTarget != "" {
+		err := os.Symlink(chunks[0].LinkTarget, p)
+		if err != nil {
+			log.Fatal("Error symlinking: ", p, " --> ", chunks[0].LinkTarget, ": ", err)
+		}
+	} else {
+		f, err := os.OpenFile(p, os.O_RDWR | os.O_CREATE | os.O_EXCL, 0777)  // we'll fix up the perms later.
 
-	// Fix permissions _after_ writing everything out
-	// in case any files lack write permission (this causes
-	// multi-chunk files to error when we try to write the
-	// second chunk)
-	FixPermAndTimes(p, chunks[0])
+		if err != nil {
+			log.Fatal("Error opening: ", err)
+		}
+
+		for _,c := range chunks {
+			RestoreOneChunk(f, c)
+		}
+
+		// Fix permissions _after_ writing everything out
+		// in case any files lack write permission (this causes
+		// multi-chunk files to error when we try to write the
+		// second chunk)
+		FixPermAndTimes(p, chunks[0])
+	}
 }
 
 func RestoreAll(bucket string, metadata string) {
