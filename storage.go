@@ -16,7 +16,7 @@ var (
 	ctx    context.Context
 )
 
-func initStorageClient() {
+func InitStorageClient() {
 	jsonKey, err := ioutil.ReadFile("cred.json")
 	if err != nil {
 		log.Fatalf("Need file 'cred.json' with service account credentials.\n")
