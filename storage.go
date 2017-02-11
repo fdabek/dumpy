@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"log"
 
+	"sync"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
 	storage	"cloud.google.com/go/storage"
@@ -42,7 +43,7 @@ func CreateChunk(bucket string, path string, data []byte) {
 		return
 	}
  	if err != storage.ErrObjectNotExist {
-	   log.Fatal(err)
+	   log.Fatal("Error getting attributes: ", err)
 	}
 	w := objHandle.NewWriter(ctx)
 	w.ContentType = "application/octet-stream"
@@ -94,18 +95,41 @@ func deleteObject(bucket string, path string) error {
 
 func ListBucket(bucket string) <-chan string {
 	out := make(chan string)
+	prefixes := []string{"0", "2", "4", "6", "8", "a", "c", "e", "f", "g"}
+
+	var wg sync.WaitGroup
+	for index, p := range prefixes {
+		p := p  // go is stupid
+		index := index // really stupid
+		if (p == "g") {
+			break
+		}
+
+		wg.Add(1)
+		go func() {
+			q := new(storage.Query)
+			q.Prefix = p
+			objects := client.Bucket(bucket).Objects(ctx, q)
+			for {
+				attr, err := objects.Next()
+				if err != nil {
+					break
+				}
+				if ((string)(attr.Name[0]) >= prefixes[index + 1]) {
+					break
+				}
+				out <- attr.Name
+			}
+			wg.Done()
+		}()	
+	}
 
 	go func() {
-		objects := client.Bucket(bucket).Objects(ctx, nil)
-		for {
-			attr, err := objects.Next()
-			if err != nil {
-				break
-			}
-			out <- attr.Name
-		}
+		// wait on some blocking thing
+		wg.Wait()
 		close(out)
-	}()	
+	}()
+
 	return out
 }
 

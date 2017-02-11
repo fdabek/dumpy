@@ -41,10 +41,12 @@ type Chunk struct {
 	LinkTarget string
 }
 
-func walkDirectory(root string) <-chan Chunk {
+func walkDirectory(roots []string) <-chan Chunk {
 	out := make(chan Chunk)
 	var queue []string
-	queue = append(queue, root)
+	for _, e := range roots {
+		queue = append(queue, e)
+	}
 
 	go func() {
 		for len(queue) > 0 {
@@ -410,13 +412,21 @@ func main() {
 	initStorageClient()
 
 	if *mode == "backup" {
-		bytes := DiskUsage(*root)
+		roots := strings.Split(*root, ",")
+		var bytes uint64
+		bytes = 0
+		for _, r := range roots {
+			bytes = bytes + DiskUsage(r)
+		}
+		fmt.Printf("Will backup: %q\n", roots)
+
 		existing := make(map[string]bool)
+		fmt.Printf("Listing bucket\n");
 		for s := range ListBucket(*bucket) {
 			existing[s] = true  // really dumb set
 		}
 
-		chunks := walkDirectory(*root)  // get all chunks in source file system
+		chunks := walkDirectory(roots)  // get all chunks in source file system
 		n, e := filterChunks(hashFiles(chunks), existing)  // hash them to find new and existing ones
 		u := uploadChunks(n, *bucket) // upload the new ones, spit out chunks after uploaded
 		j := mergeTwo(e, u)  // write everything to the JSON file (if a chunk gets here it's in GCS)
@@ -535,7 +545,6 @@ func main() {
 						RestoreFile(*bucket, f.chunks)
 					}
 					wg.Done()
-					
 				}()
 			}
 			
