@@ -43,7 +43,7 @@ type Chunk struct {
 	LinkTarget string
 }
 
-func walkDirectory(roots []string) <-chan Chunk {
+func walkDirectory(roots []string) chan Chunk {
 	out := make(chan Chunk)
 	var queue []string
 	for _, e := range roots {
@@ -97,7 +97,7 @@ func walkDirectory(roots []string) <-chan Chunk {
 	return out
 }
 
-func hashFiles(chunks <-chan Chunk) <-chan Chunk {
+func hashFiles(chunks chan Chunk) chan Chunk {
 	out := make(chan Chunk)
 
 	go func() {
@@ -132,7 +132,7 @@ func hashFiles(chunks <-chan Chunk) <-chan Chunk {
 	return out
 }
 
-func writeJSON(chunks <-chan Chunk, writer *storage.Writer) {
+func writeJSON(chunks chan Chunk, writer *storage.Writer) {
 	enc := json.NewEncoder(writer)
 	for c := range chunks {
 		err := enc.Encode(c)
@@ -144,7 +144,7 @@ func writeJSON(chunks <-chan Chunk, writer *storage.Writer) {
 	writer.Close()
 }
 
-func uploadChunks(chunks <-chan Chunk, bucket string) <-chan Chunk {
+func uploadChunks(chunks chan Chunk, bucket string) chan Chunk {
 	out := make(chan Chunk)
 	go func() {
 		var wg sync.WaitGroup
@@ -152,8 +152,12 @@ func uploadChunks(chunks <-chan Chunk, bucket string) <-chan Chunk {
 		for i := 0; i < 50; i++ {
 			go func() {
 				for c := range chunks {
-					CreateChunk(bucket, c.Md5sum, c.data)
-					out <- c
+					err := CreateChunk(bucket, c.Md5sum, c.data)
+					if (err != nil) {
+						chunks <- c
+					} else {
+						out <- c
+					}
 				}
 				wg.Done()
 			}()
@@ -164,11 +168,11 @@ func uploadChunks(chunks <-chan Chunk, bucket string) <-chan Chunk {
 	return out
 }
 
-func mergeTwo(a <-chan Chunk, b <-chan Chunk) <-chan Chunk {
+func mergeTwo(a chan Chunk, b chan Chunk) chan Chunk {
 	var wg sync.WaitGroup
 	out := make(chan Chunk)
 
-	output := func(c <-chan Chunk) {
+	output := func(c chan Chunk) {
 		for n := range c {
 			out <- n
 		}
@@ -188,7 +192,7 @@ func mergeTwo(a <-chan Chunk, b <-chan Chunk) <-chan Chunk {
 	return out
 }
 
-func filterChunks(chunks <-chan Chunk, existing map[string]bool) (<-chan Chunk, <-chan Chunk) {
+func filterChunks(chunks chan Chunk, existing map[string]bool) (chan Chunk, chan Chunk) {
 	out_existing := make(chan Chunk)
 	out_new := make(chan Chunk)
 	go func() {
@@ -361,7 +365,7 @@ func DiskUsage(dir string) uint64 {
 	return uint64(ret)
 }
 
-func ProgressBar(total_bytes uint64, in <-chan Chunk) <-chan Chunk {
+func ProgressBar(total_bytes uint64, in chan Chunk) chan Chunk {
 	out := make(chan Chunk)
 	go func() {
 		var done_bytes uint64

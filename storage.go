@@ -36,26 +36,27 @@ func InitStorageClient() {
 	}
 }
 
-func CreateChunk(bucket string, path string, data []byte) {
+func CreateChunk(bucket string, path string, data []byte) error {
 	objHandle := client.Bucket(bucket).Object(path)
 	_, err := objHandle.Attrs(ctx)
 	if err == nil {
-		return
+		return nil
 	}
 	if err != storage.ErrObjectNotExist {
-		log.Fatal("Error getting attributes: ", err)
+		return err
 	}
 	w := objHandle.NewWriter(ctx)
 	w.ContentType = "application/octet-stream"
 
 	_, err = w.Write(data)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	err = w.Close()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 // TODO(fdabek): refactor above to use GetWriter
