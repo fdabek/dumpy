@@ -352,6 +352,7 @@ func DiskUsage(dir string) uint64 {
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
+		fmt.Printf("dir is %s\n", dir)
 		log.Fatal(err)
 	}
 	s := out.String()
