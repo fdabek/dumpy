@@ -91,6 +91,7 @@ func GetReader(bucket string, path string) *storage.Reader {
 	objHandle := client.Bucket(bucket).Object(path)
 	r, err := objHandle.NewReader(ctx)
 	if err != nil {
+		log.Printf("bucket %s, object %s\n", bucket, path)
 		log.Fatal(err)
 	}
 	return r

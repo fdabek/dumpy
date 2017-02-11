@@ -212,14 +212,16 @@ func RestoreOneChunk(f *os.File, c Chunk) {
 	}
 }
 
-func FixPermAndTimes(path string, c Chunk) {
+func FixPermAndTimes(path string, chown bool, c Chunk) {
 	err := os.Chmod(path, c.FilePerm)
 	if err != nil {
 		log.Fatal("Error chmod'ing: ", err)
 	}
-	err = os.Chown(path, (int)(c.Uid), (int)(c.Gid))
-	if err != nil {
-		log.Fatal("Error changing owner to ", c.Uid, " ", c.Gid, ": ", err)
+	if chown {
+		err = os.Chown(path, (int)(c.Uid), (int)(c.Gid))
+		if err != nil {
+			log.Fatal("Error changing owner to ", c.Uid, " ", c.Gid, ": ", err)
+		}
 	}
 	err = os.Chtimes(path, c.FileModTime, c.FileModTime)
 	if err != nil {
@@ -227,7 +229,7 @@ func FixPermAndTimes(path string, c Chunk) {
 	}
 }
 
-func RestoreFile(bucket string, chunks []Chunk) {
+func RestoreFile(bucket string, chown bool, chunks []Chunk) {
 	p := chunks[0].Path
 	size := chunks[0].FileSize
 
@@ -281,7 +283,7 @@ func RestoreFile(bucket string, chunks []Chunk) {
 		// in case any files lack write permission (this causes
 		// multi-chunk files to error when we try to write the
 		// second chunk)
-		FixPermAndTimes(p, chunks[0])
+		FixPermAndTimes(p, chown, chunks[0])
 	}
 }
 
@@ -431,7 +433,7 @@ func BackupFromRoots(bucket string, roots []string) {
 	writeJSON(ProgressBar(bytes, j), w)
 }
 
-func InteractiveRestoreTerminal(bucket string) {
+func InteractiveRestoreTerminal(bucket string, chown bool) {
 	// Set up the terminal
 	if !terminal.IsTerminal(0) {
 		log.Fatal("stdin not a terminal")
@@ -449,7 +451,7 @@ func InteractiveRestoreTerminal(bucket string) {
 		md_path := strings.TrimSuffix(strings.TrimPrefix(s, "/metadata"), "backup.json")
 		dumb := s
 		d := InsertPath(md_path, root)
-		d.lazy_file_maker = func() { InsertFromJSON(d, "dumpy", dumb) }
+		d.lazy_file_maker = func() { InsertFromJSON(d, bucket, dumb) }
 	}
 
 	// setup shared state. Apparently Go captures everything in lambdas so we can get at this
@@ -533,7 +535,7 @@ func InteractiveRestoreTerminal(bucket string) {
 			go func() {
 				for f := range c {
 					state.term.Write([]byte("Restoring: " + f.name + "...\r\n"))
-					RestoreFile(bucket, f.chunks)
+					RestoreFile(bucket, chown, f.chunks)
 				}
 				wg.Done()
 			}()
