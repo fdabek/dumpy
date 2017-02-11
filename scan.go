@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -428,9 +427,8 @@ func BackupFromRoots(bucket string, roots []string) {
 	host, _ := os.Hostname()
 	prefix := t.Format("2006-01-02@03:04")
 	metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
-	w := GetWriter(*bucket, metadata_filename, "application/json")
+	w := GetWriter(bucket, metadata_filename, "application/json")
 	writeJSON(ProgressBar(bytes, j), w)
-
 }
 
 func InteractiveRestoreTerminal(bucket string) {
