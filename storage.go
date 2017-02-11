@@ -1,14 +1,14 @@
-package main
+package dumpy
 
 import (
 	"io/ioutil"
 	"log"
 
-	"sync"
+	storage "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
-	storage	"cloud.google.com/go/storage"
-        "google.golang.org/api/option"
+	"google.golang.org/api/option"
+	"sync"
 )
 
 var (
@@ -42,8 +42,8 @@ func CreateChunk(bucket string, path string, data []byte) {
 	if err == nil {
 		return
 	}
- 	if err != storage.ErrObjectNotExist {
-	   log.Fatal("Error getting attributes: ", err)
+	if err != storage.ErrObjectNotExist {
+		log.Fatal("Error getting attributes: ", err)
 	}
 	w := objHandle.NewWriter(ctx)
 	w.ContentType = "application/octet-stream"
@@ -73,18 +73,26 @@ func GetWriter(bucket string, path string, content_type string) *storage.Writer 
 func readObject(bucket string, path string) []byte {
 	objHandle := client.Bucket(bucket).Object(path)
 	r, err := objHandle.NewReader(ctx)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	data, err := ioutil.ReadAll(r)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = r.Close()
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	return data
 }
 
 func GetReader(bucket string, path string) *storage.Reader {
 	objHandle := client.Bucket(bucket).Object(path)
 	r, err := objHandle.NewReader(ctx)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	return r
 }
 
@@ -99,9 +107,9 @@ func ListBucket(bucket string) <-chan string {
 
 	var wg sync.WaitGroup
 	for index, p := range prefixes {
-		p := p  // go is stupid
+		p := p         // go is stupid
 		index := index // really stupid
-		if (p == "g") {
+		if p == "g" {
 			break
 		}
 
@@ -115,13 +123,13 @@ func ListBucket(bucket string) <-chan string {
 				if err != nil {
 					break
 				}
-				if ((string)(attr.Name[0]) >= prefixes[index + 1]) {
+				if (string)(attr.Name[0]) >= prefixes[index+1] {
 					break
 				}
 				out <- attr.Name
 			}
 			wg.Done()
-		}()	
+		}()
 	}
 
 	go func() {
@@ -149,6 +157,6 @@ func ListMetadata(bucket string) <-chan string {
 			out <- attr.Name
 		}
 		close(out)
-	}()	
+	}()
 	return out
 }

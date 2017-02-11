@@ -1,20 +1,20 @@
-package main
+package dumpy
 
 import "encoding/json"
 import "log"
 import "sort"
 import "strings"
 
-type FsEntry struct  {
-	name string
-	file bool
+type FsEntry struct {
+	name            string
+	file            bool
 	lazy_file_maker func()
-	chunks []Chunk
-	children map[string]*FsEntry
+	chunks          []Chunk
+	children        map[string]*FsEntry
 }
 
 func InsertFromJSON(root *FsEntry, bucket string, md string) {
-	if (root.file) {
+	if root.file {
 		log.Fatal("Can't insert under a file")
 	}
 
@@ -49,11 +49,11 @@ func MakeFileEntry(name string, parent *FsEntry) *FsEntry {
 	file.lazy_file_maker = nil
 	file.children = nil
 	return file
-} 
+}
 
-func MaybeInsertSubDir(root* FsEntry, dirname string) *FsEntry {
-	dir,ok := root.children[dirname]
-	if (!ok) {
+func MaybeInsertSubDir(root *FsEntry, dirname string) *FsEntry {
+	dir, ok := root.children[dirname]
+	if !ok {
 		dir = MakeDirEntry(dirname, root)
 		root.children[dirname] = dir
 	}
@@ -74,10 +74,10 @@ func InsertPath(path string, root *FsEntry) *FsEntry {
 
 	if len(parts) > 1 {
 		// first bit was a directory. Add it if necessary and recurse
-		return InsertPath("/" + parts[1], MaybeInsertSubDir(root, parts[0]))
+		return InsertPath("/"+parts[1], MaybeInsertSubDir(root, parts[0]))
 	} else {
 		// file, just add it
-		if root.children[parts[0]] == nil  {
+		if root.children[parts[0]] == nil {
 			root.children[parts[0]] = MakeFileEntry(parts[0], root)
 		}
 		return root.children[parts[0]]
@@ -95,24 +95,24 @@ func walkHelper(dir *FsEntry, depth int, callback func(*FsEntry, []*FsEntry), pa
 	}
 
 	q := make([]*FsEntry, 0)
-	for name,entry := range dir.children {
-		if (name == "." || name == "..") {
+	for name, entry := range dir.children {
+		if name == "." || name == ".." {
 			continue
 		}
 
 		callback(entry, path)
-		if (entry.file == false) {
+		if entry.file == false {
 			q = append(q, entry)
 		}
 	}
 
-	if (depth == 1) {
+	if depth == 1 {
 		return
 	}
 
 	// recurse
-	for _,entry := range q {
-		walkHelper(entry, depth - 1, callback, append(path, entry))
+	for _, entry := range q {
+		walkHelper(entry, depth-1, callback, append(path, entry))
 	}
 }
 
@@ -123,9 +123,9 @@ func (a ByFilename) Len() int           { return len(a) }
 func (a ByFilename) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFilename) Less(i, j int) bool { return a[i].name < a[j].name }
 
-func ListDir(dir* FsEntry) []*FsEntry {
+func ListDir(dir *FsEntry) []*FsEntry {
 	ret := make([]*FsEntry, 0)
-	cb := func(dir* FsEntry, parents []*FsEntry) {
+	cb := func(dir *FsEntry, parents []*FsEntry) {
 		ret = append(ret, dir)
 	}
 	Walk(dir, 1, cb)
@@ -134,7 +134,7 @@ func ListDir(dir* FsEntry) []*FsEntry {
 }
 
 func ChangeDir(dir *FsEntry, arg string) *FsEntry {
-	kid,ok := dir.children[arg]
+	kid, ok := dir.children[arg]
 	if !ok || kid.file == true {
 		return nil
 	}
