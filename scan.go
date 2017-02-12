@@ -153,12 +153,11 @@ func uploadChunks(chunks chan Chunk, bucket string) chan Chunk {
 		for i := 0; i < 50; i++ {
 			go func() {
 				for c := range chunks {
-					err := CreateChunk(bucket, c.Md5sum, c.data)
-					if (err != nil) {
-						chunks <- c
-					} else {
-						out <- c
+					for CreateChunk(bucket, c.Md5sum, c.data) != nil {
+						log.Println("Failed to create chunk ", c.Md5sum, " retrying");
+						time.Sleep(2 * time.Second)
 					}
+					out <- c
 				}
 				wg.Done()
 			}()
