@@ -40,6 +40,7 @@ func CreateChunk(bucket string, path string, data []byte) error {
 	objHandle := client.Bucket(bucket).Object(path)
 	_, err := objHandle.Attrs(ctx)
 	if err == nil {
+		log.Println(path, " already exists");
 		return nil
 	}
 	if err != storage.ErrObjectNotExist {
@@ -105,16 +106,13 @@ func deleteObject(bucket string, path string) error {
 
 func ListBucket(bucket string) <-chan string {
 	out := make(chan string)
-	prefixes := []string{"0", "2", "4", "6", "8", "a", "c", "e", "f", "g"}
+	prefixes := []string{"0", "1", "2", "3", "4", "5", "6", "7", "8",
+		"9", "a", "b", "c", "d", "e", "f"}
 
 	var wg sync.WaitGroup
 	for index, p := range prefixes {
 		p := p         // go is stupid
 		index := index // really stupid
-		if p == "g" {
-			break
-		}
-
 		wg.Add(1)
 		go func() {
 			q := new(storage.Query)
@@ -125,7 +123,7 @@ func ListBucket(bucket string) <-chan string {
 				if err != nil {
 					break
 				}
-				if (string)(attr.Name[0]) >= prefixes[index+1] {
+				if (string)(attr.Name[0]) != prefixes[index] {
 					break
 				}
 				out <- attr.Name

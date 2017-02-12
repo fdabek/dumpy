@@ -43,6 +43,42 @@ type Chunk struct {
 	LinkTarget string
 }
 
+type Progress struct {
+	update_type string
+	update_value uint64
+}
+
+var progress_chan chan Progress
+
+func StartProgressBar() chan Progress {
+	var progress_channel = make(chan Progress)
+	go func() {
+		var uploaded_bytes uint64 = 0;
+		var duplicate_bytes uint64 = 0;
+		var scanned_bytes uint64 = 0;
+		var hashed_bytes  uint64 = 0;
+
+		for chunk := range progress_channel {
+			if chunk.update_type == "uploaded" {
+				uploaded_bytes += chunk.update_value;
+			} else if chunk.update_type == "duplicate" {
+				duplicate_bytes += chunk.update_value;
+			} else if chunk.update_type == "scanned" {
+				scanned_bytes += chunk.update_value
+			} else if chunk.update_type == "hashed" {
+				hashed_bytes += chunk.update_value
+			}
+			fmt.Printf("\r Scanned %s; Hashed %s; Duplicate %s; Uploaded %s (%0.2f%%)                              ",
+				humanize.Bytes(scanned_bytes),
+				humanize.Bytes(hashed_bytes),
+				humanize.Bytes(duplicate_bytes),
+				humanize.Bytes(uploaded_bytes),
+				100.0*float64(uploaded_bytes + duplicate_bytes)/float64(scanned_bytes))
+		}
+	}()
+	return progress_channel
+}
+
 func walkDirectory(roots []string) chan Chunk {
 	out := make(chan Chunk)
 	var queue []string
@@ -84,6 +120,7 @@ func walkDirectory(roots []string) chan Chunk {
 							gid := stat.Sys().(*syscall.Stat_t).Gid
 							c := Chunk{Path: full_path, FileSize: stat.Size(), FileModTime: stat.ModTime(), FilePerm: stat.Mode(), Offset: o, Md5sum: "empty", data: make([]byte, size), Uid: uid, Gid: gid}
 							out <- c
+							progress_chan <- Progress{"scanned", (uint64)(size)}
 							o += (1 << 20)
 						}
 					}
@@ -125,6 +162,7 @@ func hashFiles(chunks chan Chunk) chan Chunk {
 				csum := md5.Sum(c.data[:])
 				c.Md5sum = hex.EncodeToString(csum[:])
 				f.Close()
+				progress_chan <- Progress{"hashed", (uint64)(n)}
 			}
 			out <- c
 		}
@@ -157,6 +195,7 @@ func uploadChunks(chunks chan Chunk, bucket string) chan Chunk {
 						log.Println("Failed to create chunk ", c.Md5sum, " retrying");
 						time.Sleep(2 * time.Second)
 					}
+					progress_chan <- Progress{"uploaded", (uint64)(len(c.data))}
 					out <- c
 				}
 				wg.Done()
@@ -199,6 +238,7 @@ func filterChunks(chunks chan Chunk, existing map[string]bool) (chan Chunk, chan
 		for c := range chunks {
 			if existing[c.Md5sum] == true {
 				out_existing <- c
+				progress_chan <- Progress{"duplicate", (uint64)(len(c.data))}
 			} else {
 				out_new <- c
 			}
@@ -366,22 +406,6 @@ func DiskUsage(dir string) uint64 {
 	return uint64(ret)
 }
 
-func ProgressBar(total_bytes uint64, in chan Chunk) chan Chunk {
-	out := make(chan Chunk)
-	go func() {
-		var done_bytes uint64
-		done_bytes = 0
-		for chunk := range in {
-			done_bytes += uint64(len(chunk.data))
-			chunk.data = nil
-			out <- chunk
-			fmt.Printf("\r Finished %s of %s (%0.2f%%)", humanize.Bytes(done_bytes), humanize.Bytes(total_bytes), 100.0*float64(done_bytes)/float64(total_bytes))
-		}
-		close(out)
-	}()
-	return out
-}
-
 func LongestPrefixString(s []string) string {
 	p := 0
 	prefix := ""
@@ -412,12 +436,9 @@ func LongestPrefixString(s []string) string {
 }
 
 func BackupFromRoots(bucket string, roots []string) {
-	var bytes uint64
-	bytes = 0
-	for _, r := range roots {
-		bytes = bytes + DiskUsage(r)
-	}
 	fmt.Printf("Will backup: %q\n", roots)
+
+	progress_chan = StartProgressBar();
 
 	existing := make(map[string]bool)
 	fmt.Printf("Listing bucket\n")
@@ -436,7 +457,8 @@ func BackupFromRoots(bucket string, roots []string) {
 	prefix := t.Format("2006-01-02@03:04")
 	metadata_filename := "/metadata/" + host + "/" + prefix + "/backup.json"
 	w := GetWriter(bucket, metadata_filename, "application/json")
-	writeJSON(ProgressBar(bytes, j), w)
+	writeJSON(j, w)
+	close(progress_chan)
 }
 
 func InteractiveRestoreTerminal(bucket string, chown bool) {
