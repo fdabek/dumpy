@@ -89,7 +89,7 @@ func walkDirectory(roots []string) chan Chunk {
 					}
 				}
 			}
-
+			f.Close()
 		}
 		close(out)
 	}()
@@ -124,6 +124,7 @@ func hashFiles(chunks chan Chunk) chan Chunk {
 				}
 				csum := md5.Sum(c.data[:])
 				c.Md5sum = hex.EncodeToString(csum[:])
+				f.Close()
 			}
 			out <- c
 		}
@@ -282,6 +283,7 @@ func RestoreFile(bucket string, chown bool, chunks []Chunk) {
 		for _, c := range chunks {
 			RestoreOneChunk(f, c)
 		}
+		f.Close()
 
 		// Fix permissions _after_ writing everything out
 		// in case any files lack write permission (this causes
